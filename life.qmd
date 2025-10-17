@@ -1,0 +1,533 @@
+---
+title: "Obesity"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(GGally)
+library(car)
+library(corrplot)
+library(dplyr)
+library(tidyverse)
+library(lmtest)
+library(sandwich)
+library(RColorBrewer)
+library(scales)
+library(relaimpo)
+library(tidyr)
+```
+
+# EDA (Exploratory Data Analysis)
+
+```{r}
+df <- read.csv("C:/Users/hecto/OneDrive/Documents/School/Semesters/Spring 2025/Project/Data/life.csv")
+
+head(df)
+```
+
+```{r}
+str(df)
+```
+
+```{r}
+df$Status <- as.factor(df$Status)
+
+```
+
+```{r}
+dim(df)
+```
+
+## Multicolinearity
+
+```{r}
+# Create a new dataframe excluding column 9 (response variable)
+
+
+# Optional: Double check that column 9 was removed
+# names(grad2)
+
+# Recreate the cool color palette
+cool_colors <- colorRampPalette(c("orange", "yellow", "red"))(200)
+
+# Run corrplot only on numeric columns (predictors only)
+corrplot(cor(df[, sapply(df, is.numeric)]),
+         method = "circle",
+         col = cool_colors,
+         tl.cex = 0.8,
+         number.cex = 0.7,
+         addCoef.col = "black",
+         diag = FALSE)
+
+```
+
+```{r}
+df <- df[ , -1]
+
+```
+
+```{r}
+library(car)
+fit <- lm(Life.expectancy ~  ., data = df)  # drop Serial.No.
+summary(fit)
+```
+
+```{r}
+sum(is.na(df))
+```
+
+```{r}
+df2 <- na.omit(df) 
+df2 <- df2[ , -1]
+```
+
+```{r}
+sum(is.na(df2))
+```
+
+```{r}
+dim(df2)
+```
+
+```{r}
+str(df2)
+```
+
+```{r}
+pairs(subset(df2, select = c(Adult.Mortality, Alcohol ,Life.expectancy, BMI, GDP)))
+
+```
+
+```{r}
+pairs(subset(df2, select = c(Population, Schooling,Life.expectancy, Income.composition.of.resources,  percentage.expenditure)))
+
+```
+
+```{r}
+attach(df2)
+```
+
+```{r}
+summary(df2$Life.expectancy)
+```
+
+```{r}
+plot(Life.expectancy ~ Adult.Mortality)
+
+
+```
+
+```{r}
+plot(Life.expectancy ~ Alcohol)
+```
+
+```{r}
+plot(Life.expectancy ~ BMI)
+```
+
+```{r}
+plot(Life.expectancy ~ GDP)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(df2, aes(x = Population / 1000, y = Life.expectancy)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm") +
+  xlim(0, 50000) +
+  labs(
+    title = "Life Expectancy vs Population (in thousands)",
+    x = "Population (thousands)",
+    y = "Life Expectancy"
+  )
+
+```
+
+```{r}
+plot(Life.expectancy ~ Schooling)
+```
+
+```{r}
+plot(Life.expectancy ~ Income.composition.of.resources)
+```
+
+```{r}
+plot(Life.expectancy ~  percentage.expenditure)
+```
+
+## Potentially Problematic Predictors
+
+```{r}
+plot(Life.expectancy ~ HIV.AIDS)
+```
+
+```{r}
+plot(Life.expectancy ~ Diphtheria)
+```
+
+## Distribution Checks
+
+```{r}
+hist(df2$Life.expectancy, breaks=30)
+hist(df2$percentage.expenditure, breaks=30)
+hist(df2$Income.composition.of.resources, breaks=30)
+hist(df2$HIV.AIDS, breaks=30)
+hist(log(df$HIV.AIDS), breaks = 30)
+```
+
+## Forward Stepwise AIC
+
+```{r}
+mod.full <- lm(Life.expectancy ~ ., data = df2)
+mod.none <- lm(Life.expectancy ~ 1, data = df2)
+
+aic.fw <- step(mod.none, scope = list(lower = mod.none, upper = mod.full), direction = "forward", trace = 0)
+aic.fw
+```
+
+## Backwards Stepwise AIC
+
+```{r}
+mod.full <- lm(Life.expectancy ~ ., data = df2)
+
+aic.bkw <- step(mod.full, direction = "backward", trace = 0)
+aic.bkw
+```
+
+## Forward Stepwise BIC
+
+```{r}
+n <- nrow(df2)
+mod.full <- lm(Life.expectancy ~ ., data = df2)
+mod.none <- lm(Life.expectancy ~ 1, data = df2)
+
+mod.fw <- step(mod.none,
+     scope = list(lower = mod.none, upper = mod.full),
+     direction = "forward",
+     k = log(n),     # BIC penalty
+     trace = 0)
+
+mod.fw
+```
+
+## Backward Stepwise BIC
+
+```{r}
+
+n <- nrow(df2)
+mod.full <- lm(Life.expectancy ~ ., data = df2)
+
+mod.bkw <- step(mod.full,
+     direction = "backward",
+     k = log(n),     # BIC penalty
+     trace = 0)
+mod.bkw
+```
+
+```{r}
+vif(mod.bkw)
+```
+
+Variables of concern: `under.five.deaths` & `infant.deaths`
+
+`gdp` and `percentage.expenditure` = (Health expenditure / GDP) × 100
+
+If GDP increases and health spending stays constant, `percentage.expenditure` drops.
+
+`thinness.1.19.years` and `thinness.5.9.years`
+
+### Variables Worth Dropping:
+
+-   `under.five.deaths` & `infant.deaths` : removed due to explaining similar things as `adult.mortality`
+
+-   `Measles` / `Polio` / `Hepatitis.B` / `Diptheria` : Highly correlated and mostly useful for explaining lower income countries
+
+-   `thinness 1–19` **/** `thinness 5–9`: not useful for explaining `adult.mortality`
+
+-   `GDP`: Better explained by `percentage.expenditure`
+
+-   `Population` : Not measured in per capita, so may mess up measurments due to not being normalized
+
+# Fitting First Model
+
+```{r}
+fit1 <- lm(Life.expectancy ~  Status +  Adult.Mortality + Alcohol + 
+             percentage.expenditure + BMI + HIV.AIDS 
+           + Income.composition.of.resources + Schooling,
+           data = df2)
+
+summary(fit1)
+```
+
+```{r}
+vif(fit1)
+```
+
+```{r}
+plot(fit1, 1)
+```
+
+```{r}
+plot(fit1, 2)
+```
+
+```{r}
+shapiro.test(fit1$residuals)
+```
+
+### Power Transformations for X & Y
+
+```{r}
+pt1 <- powerTransform(df2$Life.expectancy)
+summary(pt1)
+```
+
+```{r}
+boxCox(fit1)
+```
+
+```{r}
+
+df2$percentage.expenditure_adj <- df2$percentage.expenditure + 0.01
+df2$Income.composition.adj <- df2$Income.composition.of.resources + 0.01
+
+```
+
+```{r}
+pt2 <- powerTransform(cbind(Status ,Adult.Mortality ,
+    Alcohol , BMI, HIV.AIDS, 
+    Schooling, percentage.expenditure_adj,Income.composition.adj) ~ 1, data = df2)
+summary(pt2)
+```
+
+We see a major issue with Status ( $\lambda$ = 9.75 )
+
+# Model Fit 2
+
+```{r}
+fit2 <- lm(Life.expectancy ~ Adult.Mortality + Alcohol + 
+             percentage.expenditure + BMI + log(HIV.AIDS) 
+           + Income.composition.of.resources + Schooling)
+summary(fit2)
+```
+
+We take `log(HIV.AIDS)` due to stand out powerTransform suggestion (-0.5), we take log, and -0.5 and compare with AIC.
+
+# Model Fit 3 ( $\lambda$ = -0.5 )
+
+```{r}
+# Apply Box-Cox transformation with λ = -0.5
+df2$HIV.AIDS_bc <- ((df2$HIV.AIDS)^(-0.5) - 1)/(-0.5)
+
+# Now fit the model
+fit3 <- lm(Life.expectancy ~ 
+             Adult.Mortality + Alcohol + 
+             BMI + HIV.AIDS_bc + 
+             Income.composition.of.resources + Schooling,
+           data = df2)
+
+```
+
+```{r}
+plot(fit3,1)
+```
+
+```{r}
+qqPlot(fit3)
+```
+
+```{r}
+AIC(fit2, fit3)
+```
+
+AIC shows that the `log(HIV.AIDS)` model performs better, as both satisfy constant variance.
+
+# Model Fit 4 (Moving Forward with Model 2)
+
+```{r}
+fit4 <- lm(Life.expectancy ~ Adult.Mortality + Alcohol + 
+             percentage.expenditure + BMI + log(HIV.AIDS) 
+           + Income.composition.of.resources + Schooling)
+summary(fit4)
+```
+
+We now see that `Alcohol` is statistically insignificant (p-value = 0.9147) so we remove it from the model.
+
+# Model Fit 5
+
+```{r}
+fit5 <- lm(Life.expectancy ~ Adult.Mortality + 
+             percentage.expenditure + BMI + log(HIV.AIDS) 
+           + Income.composition.of.resources + Schooling, data = df2)
+summary(fit5)
+```
+
+Compared to the full model we now see that Adult.Mortality, percentage.expenditure, BMI, log(HIV.AIDS), Income.composition.of.resources, and Schooling are all highly significant after removing some variables from the stepwise selection process, as well as seeing as Alcohol after seeing it become insignificant after taking log(HIV.AIDS). About 84.09% of the adj. $R^2$ variability in total is explained by a multiple linear regression model with all the predictors collectively.
+
+```{r}
+
+vars_to_check <- c("Life.expectancy", "Adult.Mortality", 
+                   "percentage.expenditure", "BMI", 
+                   "HIV.AIDS", "Income.composition.of.resources", "Schooling")
+model_vars_df <- df2[, vars_to_check]
+model_vars_df <- model_vars_df[sapply(model_vars_df, is.numeric)]
+cor_matrix <- cor(model_vars_df, use = "complete.obs")
+corrplot(cor_matrix, method = "color", type = "upper", order = "hclust", tl.cex = 0.8)
+
+```
+
+```{r}
+# Calculate correlation matrix (only numbers)
+cor_matrix <- cor(model_vars_df, use = "complete.obs")
+
+# Print correlation matrix nicely
+round(cor_matrix, 2)
+
+
+```
+
+### Model 5 Diagnostics
+
+```{r}
+
+plot(fit5, 1:3)
+```
+
+```{r}
+shapiro.test(fit5$residuals)
+```
+
+```{r}
+plot(fit5, 4)
+```
+
+```{r}
+df2[1346, ]
+```
+
+```{r}
+df2[1340:1348,]
+```
+
+We can see that HIV.AIDS rates were at an an unusual high in Sierra Leone in 2008
+
+```{r}
+df2[877, ]
+
+```
+
+```{r}
+df2[874:880,]
+```
+
+Percentage.expenditure is an outlier here in Luxembourg, explained by economic and historical factors
+
+```{r}
+#n <- nrow(df2)
+#p <- 6
+#ind_h <- which(hatvalues(fit5) > 2*(p+1) / n)
+#df2[ind_h, ]
+```
+
+```{r}
+#ind <- which(abs(rstandard(fit5)) > 2)
+#df2[ind, ]
+```
+
+```{r}
+#intersect(ind, ind_h)
+```
+
+```{r}
+
+leverage_points <- hatvalues(fit5)
+plot(leverage_points)
+
+high_lev <- which(leverage_points > 2 * mean(leverage_points))
+text(high_lev, leverage_points[high_lev], labels=high_lev, pos=1, cex=0.8, col="blue")
+
+```
+
+```{r}
+p <- 6
+n <- nrow(df2)
+plot(hatvalues(fit5), rstandard(fit5))
+abline(h = c(-2,2), lty =2, col = "blue")
+abline(v = 2 * (p +1) / n, col = "red", lty = 2)
+```
+
+```{r}
+avPlots(fit5)
+```
+
+From the added variable plots we can see the predictors all have significant predicting power for Life.expectancy when controlling for other predictors like those in this model
+
+## Checking for \[1346, 0\] outliers
+
+```{r}
+plot(log(df2$HIV.AIDS), df2$Life.expectancy,
+     col = "gray", pch = 20, main = "log(HIV.AIDS)")
+points(log(df2$HIV.AIDS[1346]), df2$Life.expectancy[1346],
+       col = "red", pch = 19)
+
+```
+
+```{r}
+# Life.expectancy vs log(HIV.AIDS)
+plot(df2$HIV.AIDS, df2$Life.expectancy, col = "gray", pch = 20, main = "log(HIV.AIDS)")
+
+```
+
+High HIV.AIDS rate in Sierra Leone in 2008
+
+## Checking for \[877, 0\] outliers
+
+```{r}
+# Life.expectancy vs percentage.expenditure
+plot(df2$percentage.expenditure, df2$Life.expectancy, col = "gray", pch = 20, main = "Percentage Expenditure")
+points(df2$percentage.expenditure[877], df2$Life.expectancy[877], col = "red", pch = 19)
+```
+
+Row 877 - Luxemburg high spending on GPD % for healthcare in 2009
+
+# Model Fit 6 (Removing Outlier)
+
+```{r}
+fit6<- lm(Life.expectancy ~ Adult.Mortality + 
+                     percentage.expenditure + BMI + log(HIV.AIDS) + 
+                     Income.composition.of.resources + Schooling, 
+                   data = df2[-877,])
+summary(fit6)
+```
+
+### Model 6 Diagnostics
+
+```{r}
+plot(fit6, 4)
+```
+
+```{r}
+AIC(fit5, fit6)
+
+```
+
+AIC improvement is marginal and not significant in its predicting power
+
+## Exploring Fit 5 Further
+
+```{r}
+confint(fit5)
+```
+
+```{r}
+library(broom)
+tidy(fit5, conf.int = TRUE)
+
+```
+
+```{r}
+detach(df2)
+```
